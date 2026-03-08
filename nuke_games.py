@@ -1410,375 +1410,6 @@ class GameBlockBlast(QtWidgets.QWidget):
 
 
 
-# ==============================================================================
-# GAME 5 - SPACE INVADERS
-# ==============================================================================
-
-SI_COLS = 11
-SI_ROWS = 4
-SI_CW   = 44
-SI_RH   = 36
-SI_W    = 520
-SI_H    = 480
-
-# Alien shapes drawn with QPainter (3 types)
-SI_ALIEN_TYPES = [0, 0, 0, 1, 1, 2, 2]   # per row (clamped)
-
-class SpaceInvadersCanvas(QtWidgets.QWidget):
-    def __init__(self, parent=None):
-        super(SpaceInvadersCanvas, self).__init__(parent)
-        self.setFixedSize(SI_W, SI_H)
-        self.setStyleSheet("background:#000;")
-        self.setFocusPolicy(Qt.StrongFocus)
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self.score = 0; self.best = 0; self.level = 1
-        self.paused = False; self.over = False; self.won = False
-        self._new_game()
-
-    def _new_game(self):
-        self._timer.stop()
-        self.score = 0; self.level = 1
-        self.over = False; self.won = False; self.paused = False
-        # player
-        self._px    = SI_W // 2
-        self._py    = SI_H - 36
-        self._pv    = 0
-        self._pleft = False; self._pright = False
-        self._pshoot_cd = 0
-        # bullets: [x, y, dy]
-        self._pbullets = []
-        self._ebullets = []
-        # aliens: [col, row, alive, x, y, type]
-        self._aliens = []
-        self._alien_dir   = 1
-        self._alien_step  = 0
-        self._alien_tick  = 0
-        self._alien_speed = 28   # ticks between moves
-        self._alien_drop  = False
-        self._shoot_cd    = 0
-        self._anim_tick   = 0
-        self._shields     = self._make_shields()
-        self._reset_aliens()
-        self._timer.start(16)
-        self.update()
-
-    def _reset_aliens(self):
-        self._aliens = []
-        ox = 40; oy = 60
-        for r in range(SI_ROWS):
-            for c in range(SI_COLS):
-                atype = min(r, 2)
-                self._aliens.append([c, r, True,
-                    float(ox + c*SI_CW),
-                    float(oy + r*SI_RH),
-                    atype])
-        self._alien_dir  = 1
-        self._alien_step = 0
-        self._alien_drop = False
-
-    def _make_shields(self):
-        shields = []
-        for i in range(4):
-            sx = 60 + i * 110
-            sy = SI_H - 90
-            blocks = []
-            for br in range(3):
-                for bc in range(6):
-                    blocks.append([sx + bc*8, sy + br*8, True])
-            shields.append(blocks)
-        return shields
-
-    def _tick(self):
-        if self.over or self.won or self.paused: return
-        self._anim_tick += 1
-
-        # player move
-        spd = 4
-        if self._pleft:  self._px = max(22, self._px - spd)
-        if self._pright: self._px = min(SI_W-22, self._px + spd)
-        if self._pshoot_cd > 0: self._pshoot_cd -= 1
-
-        # move player bullets
-        self._pbullets = [[x,y-9,dy] for x,y,dy in self._pbullets if y > -10]
-
-        # move enemy bullets
-        self._ebullets = [[x,y+5,dy] for x,y,dy in self._ebullets if y < SI_H+10]
-
-        # alien movement
-        self._alien_tick += 1
-        speed = max(4, self._alien_speed - self.level*2)
-        if self._alien_tick >= speed:
-            self._alien_tick = 0
-            alive = [a for a in self._aliens if a[2]]
-            if not alive:
-                self.won = True
-                self.level += 1
-                add_score("Space Invaders", self.score, self.level-1)
-                self.update(); return
-            # check if need to drop
-            xs = [a[3] for a in alive]
-            if (self._alien_dir > 0 and max(xs) > SI_W - 30) or \
-               (self._alien_dir < 0 and min(xs) < 30):
-                self._alien_dir *= -1
-                for a in self._aliens:
-                    if a[2]: a[4] += 18
-            else:
-                for a in self._aliens:
-                    if a[2]: a[3] += self._alien_dir * 12
-
-            # random alien shoot
-            alive2 = [a for a in self._aliens if a[2]]
-            if alive2 and random.random() < 0.25:
-                shooter = random.choice(alive2)
-                self._ebullets.append([shooter[3], shooter[4]+16, 5])
-
-        # bullet-alien collision
-        for b in list(self._pbullets):
-            for a in self._aliens:
-                if not a[2]: continue
-                if abs(b[0]-a[3]) < 16 and abs(b[1]-a[4]) < 14:
-                    a[2] = False
-                    pts = [30,20,10][a[5]]
-                    self.score += pts * self.level
-                    if b in self._pbullets:
-                        self._pbullets.remove(b)
-                    break
-
-        # bullet-shield collision
-        for shields in self._shields:
-            for blk in shields:
-                if not blk[2]: continue
-                for b in list(self._pbullets):
-                    if abs(b[0]-blk[0])<5 and abs(b[1]-blk[1])<5:
-                        blk[2] = False
-                        if b in self._pbullets: self._pbullets.remove(b)
-                for b in list(self._ebullets):
-                    if abs(b[0]-blk[0])<6 and abs(b[1]-blk[1])<6:
-                        blk[2] = False
-                        if b in self._ebullets: self._ebullets.remove(b)
-
-        # enemy bullet hits player
-        for b in self._ebullets:
-            if abs(b[0]-self._px) < 20 and abs(b[1]-self._py) < 14:
-                self.over = True
-                self._timer.stop()
-                if self.score > self.best: self.best = self.score
-                add_score("Space Invaders", self.score, self.level)
-                self.update(); return
-
-        # aliens reach bottom
-        for a in self._aliens:
-            if a[2] and a[4] > SI_H - 60:
-                self.over = True
-                self._timer.stop()
-                if self.score > self.best: self.best = self.score
-                add_score("Space Invaders", self.score, self.level)
-                self.update(); return
-
-        self.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#000011"))
-
-        # stars
-        p.setPen(QColor(255,255,255,50))
-        rng2 = random.Random(99)
-        for _ in range(60):
-            p.drawPoint(rng2.randint(0,SI_W), rng2.randint(0,SI_H))
-
-        # shields
-        for shields in self._shields:
-            for blk in shields:
-                if blk[2]:
-                    p.setBrush(QColor("#1aff44"))
-                    p.setPen(Qt.NoPen)
-                    p.drawRect(int(blk[0]-3), int(blk[1]-3), 7, 7)
-
-        # aliens
-        anim_frame = (self._anim_tick // 14) % 2
-        for a in self._aliens:
-            if not a[2]: continue
-            ax, ay = int(a[3]), int(a[4])
-            t = a[5]
-            if t == 0:    col = QColor("#ff4dff")
-            elif t == 1:  col = QColor("#4dffff")
-            else:         col = QColor("#ff4d4d")
-            self._draw_alien(p, ax, ay, t, anim_frame, col)
-
-        # player ship
-        self._draw_ship(p, self._px, self._py)
-
-        # player bullets
-        p.setBrush(QColor("#00ff88"))
-        p.setPen(Qt.NoPen)
-        for bx,by,_ in self._pbullets:
-            p.drawRect(int(bx)-2, int(by)-8, 4, 14)
-
-        # enemy bullets
-        p.setBrush(QColor("#ff4444"))
-        for bx,by,_ in self._ebullets:
-            p.drawRect(int(bx)-2, int(by)-5, 4, 10)
-
-        # HUD
-        p.setPen(QColor("#00ff88"))
-        p.setFont(QFont("Arial",12,QFont.Bold))
-        p.drawText(10, 20, "SCORE: "+str(self.score))
-        p.setPen(QColor("#4dffff"))
-        p.setFont(QFont("Arial",10))
-        p.drawText(10, 34, "LV "+str(self.level)+"   BEST: "+str(self.best))
-        p.setPen(QColor(255,255,255,30))
-        p.setFont(QFont("Arial",9))
-        p.drawText(4, SI_H-4, "LEFT/RIGHT: move   SPACE: shoot   P: pause   R: restart")
-
-        if self.paused:
-            p.fillRect(self.rect(), QColor(0,0,0,140))
-            p.setPen(QColor("#00ff88"))
-            p.setFont(QFont("Arial",26,QFont.Bold))
-            p.drawText(QRect(0,0,SI_W,SI_H), Qt.AlignCenter, "PAUSED")
-
-        if self.won:
-            p.fillRect(self.rect(), QColor(0,0,0,140))
-            p.setPen(QColor("#ffe000"))
-            p.setFont(QFont("Arial",22,QFont.Bold))
-            p.drawText(QRect(0,SI_H//2-50,SI_W,40), Qt.AlignCenter, "WAVE CLEARED!")
-            p.setPen(QColor("#4dffff"))
-            p.setFont(QFont("Arial",13))
-            p.drawText(QRect(0,SI_H//2,SI_W,30), Qt.AlignCenter, "Score: "+str(self.score)+"   R for next wave")
-
-        if self.over:
-            p.fillRect(self.rect(), QColor(0,0,0,150))
-            p.setPen(QColor("#ff4444"))
-            p.setFont(QFont("Arial",26,QFont.Bold))
-            p.drawText(QRect(0,SI_H//2-60,SI_W,44), Qt.AlignCenter, "GAME OVER")
-            p.setPen(QColor("#ffe000"))
-            p.setFont(QFont("Arial",13))
-            p.drawText(QRect(0,SI_H//2-8,SI_W,30), Qt.AlignCenter, "Score: "+str(self.score)+"   Best: "+str(self.best))
-            p.setPen(QColor(255,255,255,120))
-            p.setFont(QFont("Arial",11))
-            p.drawText(QRect(0,SI_H//2+28,SI_W,30), Qt.AlignCenter, "R to restart")
-        p.end()
-
-    def _draw_alien(self, p, ax, ay, t, frame, col):
-        p.setBrush(col)
-        p.setPen(Qt.NoPen)
-        if t == 0:  # top alien - squid-like
-            p.drawEllipse(ax-10, ay-8, 20, 14)
-            legs = [(-10,6),(-5,6),(5,6),(10,6)] if frame==0 else [(-8,8),(-4,8),(4,8),(8,8)]
-            for lx,ly in legs:
-                p.drawRect(ax+lx-1, ay+ly, 3, 5)
-            p.setBrush(QColor(0,0,0))
-            p.drawEllipse(ax-5,ay-5,4,4); p.drawEllipse(ax+1,ay-5,4,4)
-        elif t == 1:  # mid alien - crab-like
-            p.drawRect(ax-12, ay-6, 24, 12)
-            arms = [(-14,0),(-14,4),(12,0),(12,4)] if frame==0 else [(-16,-2),(-16,6),(14,-2),(14,6)]
-            p.drawRect(ax+arms[0][0], ay+arms[0][1], 4, 3)
-            p.drawRect(ax+arms[1][0], ay+arms[1][1], 4, 3)
-            p.drawRect(ax+arms[2][0], ay+arms[2][1], 4, 3)
-            p.drawRect(ax+arms[3][0], ay+arms[3][1], 4, 3)
-            p.setBrush(QColor(0,0,0))
-            p.drawEllipse(ax-6,ay-3,4,4); p.drawEllipse(ax+2,ay-3,4,4)
-        else:  # bottom alien - octopus-like
-            p.drawEllipse(ax-11, ay-9, 22, 16)
-            tents = [(-10,5),(-5,7),(0,8),(5,7),(10,5)] if frame==0 else [(-8,8),(-4,6),(0,9),(4,6),(8,8)]
-            for tx2,ty2 in tents:
-                p.drawRect(ax+tx2-1, ay+ty2, 3, 4)
-            p.setBrush(QColor(0,0,0))
-            p.drawEllipse(ax-5,ay-5,4,4); p.drawEllipse(ax+1,ay-5,4,4)
-
-    def _draw_ship(self, p, sx, sy):
-        sg = QLinearGradient(sx-20, sy-14, sx-20, sy+10)
-        sg.setColorAt(0, QColor("#4dffff"))
-        sg.setColorAt(1, QColor("#007a7a"))
-        p.setBrush(sg)
-        p.setPen(Qt.NoPen)
-        path = QPainterPath()
-        path.moveTo(sx, sy-14)
-        path.lineTo(sx+22, sy+10)
-        path.lineTo(sx-22, sy+10)
-        path.closeSubpath()
-        p.drawPath(path)
-        p.setBrush(QColor("#00ffcc"))
-        p.drawEllipse(sx-6, sy-8, 12, 10)
-
-    def keyPressEvent(self, e):
-        k = e.key()
-        if k in (Qt.Key_Left, Qt.Key_A):   self._pleft  = True
-        elif k in (Qt.Key_Right, Qt.Key_D): self._pright = True
-        elif k == Qt.Key_Space:
-            if self._pshoot_cd == 0 and not self.over and not self.paused:
-                self._pbullets.append([float(self._px), float(self._py-16), -9])
-                self._pshoot_cd = 16
-        elif k == Qt.Key_P:
-            self.paused = not self.paused
-        elif k == Qt.Key_R:
-            self._new_game()
-
-    def keyReleaseEvent(self, e):
-        k = e.key()
-        if k in (Qt.Key_Left, Qt.Key_A):    self._pleft  = False
-        elif k in (Qt.Key_Right, Qt.Key_D): self._pright = False
-
-
-class GameSpaceInvaders(QtWidgets.QWidget):
-    def __init__(self):
-        super(GameSpaceInvaders, self).__init__()
-        self.setWindowTitle("Space Invaders  |  JK Games")
-        self.setStyleSheet("background:#000011;")
-        self.setWindowFlags(Qt.Window)
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
-
-        tb = QtWidgets.QWidget()
-        tb.setStyleSheet("background:#000008;border-bottom:1px solid #0a0a22;")
-        tb.setFixedHeight(38)
-        tbl = QtWidgets.QHBoxLayout(tb)
-        tbl.setContentsMargins(10,4,10,4); tbl.setSpacing(8)
-        logo = QtWidgets.QLabel("SPACE INVADERS")
-        logo.setStyleSheet("color:#00ff88;font-size:13px;font-weight:800;letter-spacing:2px;")
-        self._sc = QtWidgets.QLabel("SCORE: 0")
-        self._sc.setStyleSheet("color:#ffe000;font-size:12px;font-weight:700;")
-        self._lv = QtWidgets.QLabel("LV 1")
-        self._lv.setStyleSheet("color:#4dffff;font-size:12px;font-weight:700;")
-        self._pb = QtWidgets.QPushButton("Pause")
-        self._pb.setStyleSheet(BTN_STYLE); self._pb.setFocusPolicy(Qt.NoFocus)
-        self._pb.clicked.connect(self._pause)
-        rb = QtWidgets.QPushButton("Restart")
-        rb.setStyleSheet(BTN_STYLE); rb.setFocusPolicy(Qt.NoFocus)
-        rb.clicked.connect(self._restart)
-        tbl.addWidget(logo); tbl.addStretch()
-        tbl.addWidget(self._lv); tbl.addWidget(self._sc)
-        tbl.addWidget(self._pb); tbl.addWidget(rb)
-        lay.addWidget(tb)
-
-        self.canvas = SpaceInvadersCanvas(self)
-        self.canvas._timer.timeout.connect(self._tick_ui)
-        lay.addWidget(self.canvas)
-        self.adjustSize(); self.canvas.setFocus()
-
-    def _tick_ui(self):
-        self._sc.setText("SCORE: "+str(self.canvas.score))
-        self._lv.setText("LV "+str(self.canvas.level))
-
-    def _pause(self):
-        self.canvas.paused = not self.canvas.paused
-        self._pb.setText("Resume" if self.canvas.paused else "Pause")
-        self.canvas.update(); self.canvas.setFocus()
-
-    def _restart(self):
-        self.canvas._new_game(); self._pb.setText("Pause"); self.canvas.setFocus()
-
-    def keyPressEvent(self, e):
-        if e.key() == Qt.Key_P: self._pause()
-        else: self.canvas.keyPressEvent(e)
-
-    def keyReleaseEvent(self, e):
-        self.canvas.keyReleaseEvent(e)
-
-
-
 
 # ==============================================================================
 # GAME 6 - BLOCKUDOKU PUZZLE
@@ -2267,6 +1898,110 @@ class CardWrapper(QtWidgets.QWidget):
         self.setStyleSheet("background:transparent;")
 
 
+class JKLogoWidget(QtWidgets.QWidget):
+    """Multi-colour animated neon title. Hardcoded - not editable."""
+    # Letter colours: J=cyan, K=magenta, space, G=yellow, A=green, M=orange, E=red, S=purple
+    LETTER_COLORS = [
+        "#00ffff",  # J
+        "#ff00ff",  # K
+        None,       # space
+        "#ffe000",  # G
+        "#00ff88",  # A
+        "#ff6600",  # M
+        "#ff3333",  # E
+        "#cc44ff",  # S
+    ]
+    LETTERS = "JK GAMES"
+
+    def __init__(self, parent=None):
+        super(JKLogoWidget, self).__init__(parent)
+        self.setFixedSize(320, 52)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._t = 0
+        tmr = QTimer(self)
+        tmr.timeout.connect(self._tick)
+        tmr.start(40)
+
+    def _tick(self):
+        self._t += 1
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+
+        font = QFont("Arial", 32, QFont.Black)
+        font.setLetterSpacing(QFont.AbsoluteSpacing, 3)
+        p.setFont(font)
+        fm = p.fontMetrics()
+
+        # measure total width for centering
+        total_w = fm.horizontalAdvance(self.LETTERS) if hasattr(fm,'horizontalAdvance') else fm.width(self.LETTERS)
+        x = 0
+
+        for i, ch in enumerate(self.LETTERS):
+            col_hex = self.LETTER_COLORS[i]
+            if col_hex is None:
+                x += fm.horizontalAdvance(' ') if hasattr(fm,'horizontalAdvance') else fm.width(' ')
+                x += 3  # letter-spacing
+                continue
+
+            base_color = QColor(col_hex)
+            cw = fm.horizontalAdvance(ch) if hasattr(fm,'horizontalAdvance') else fm.width(ch)
+
+            # pulse: each letter oscillates at different phase
+            phase = (self._t * 0.15 + i * 0.7)
+            import math
+            pulse = (math.sin(phase) + 1.0) / 2.0   # 0..1
+
+            # -- outer glow (wide, soft) ---------------------------------------
+            glow_col = QColor(base_color)
+            glow_col.setAlpha(int(40 + pulse * 50))
+            p.setPen(QPen(glow_col, 10, Qt.SolidLine, Qt.RoundCap))
+            p.drawText(x + 1, 40, ch)
+
+            # -- mid glow -----------------------------------------------------
+            mid_col = QColor(base_color)
+            mid_col.setAlpha(int(80 + pulse * 80))
+            p.setPen(QPen(mid_col, 5, Qt.SolidLine, Qt.RoundCap))
+            p.drawText(x + 1, 40, ch)
+
+            # -- sharp core with vertical gradient via path --------------------
+            bright = base_color.lighter(int(110 + pulse * 50))
+            p.setPen(QPen(bright, 1))
+            p.setBrush(Qt.NoBrush)
+            p.drawText(x, 39, ch)
+
+            # -- white hot centre streak ---------------------------------------
+            white = QColor(255, 255, 255, int(60 + pulse * 120))
+            p.setPen(QPen(white, 1))
+            p.drawText(x, 38, ch)
+
+            x += cw + 3  # +3 for letter-spacing
+
+        # -- animated underline - individual colour segments -------------------
+        bar_y  = 46
+        seg_w  = 10
+        gap    = 4
+        xi     = 0
+        ci     = 0
+        solid_colors = [c for c in self.LETTER_COLORS if c is not None]
+        while xi < total_w + 10:
+            import math
+            wave  = math.sin(self._t * 0.12 - xi * 0.08)
+            alpha = int(120 + wave * 80)
+            col   = QColor(solid_colors[ci % len(solid_colors)])
+            col.setAlpha(alpha)
+            p.setBrush(col); p.setPen(Qt.NoPen)
+            # height pulses slightly
+            h = 3 + int((wave + 1) * 1.5)
+            p.drawRoundedRect(xi, bar_y - h + 3, seg_w, h, 1, 1)
+            xi += seg_w + gap
+            ci += 1
+
+        p.end()
+
 class JKGamesHub(QtWidgets.QWidget):
     def __init__(self):
         super(JKGamesHub, self).__init__()
@@ -2279,7 +2014,7 @@ class JKGamesHub(QtWidgets.QWidget):
         self._tab_games = [
             ("2048","#f5c542"),("Snake","#4dff91"),
             ("Breakout","#4fc3f7"),("Block Blast","#ff7043"),
-            ("Space Invaders","#00ff88"),("Blockudoku","#9b59b6"),
+("Blockudoku","#9b59b6"),
         ]
         self._build()
 
@@ -2288,7 +2023,7 @@ class JKGamesHub(QtWidgets.QWidget):
         root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
         # banner
-        banner = QtWidgets.QWidget(); banner.setFixedHeight(82)
+        banner = QtWidgets.QWidget(); banner.setFixedHeight(96)
         banner.setStyleSheet(
             "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             "stop:0 #0d0600,stop:0.4 #120800,stop:0.7 #080814,stop:1 #0d0600);"
@@ -2296,13 +2031,10 @@ class JKGamesHub(QtWidgets.QWidget):
         )
         bl = QtWidgets.QHBoxLayout(banner); bl.setContentsMargins(32,0,32,0)
         lv = QtWidgets.QVBoxLayout(); lv.setSpacing(2)
-        logo = QtWidgets.QLabel("JK GAMES")
-        logo.setStyleSheet(
-            "color:#f5c542;font-size:28px;font-weight:900;letter-spacing:8px;"
-            "background:transparent;")
+        logo = JKLogoWidget()
         tag = QtWidgets.QLabel("Render running  -  time to play")
-        tag.setStyleSheet("color:#3a2000;font-size:10px;font-style:italic;"
-                          "letter-spacing:1px;background:transparent;")
+        tag.setStyleSheet("color:#5a3800;font-size:10px;font-style:italic;"
+                          "letter-spacing:2px;background:transparent;")
         lv.addWidget(logo); lv.addWidget(tag)
         badge = QtWidgets.QWidget()
         badge.setStyleSheet(
@@ -2322,7 +2054,19 @@ class JKGamesHub(QtWidgets.QWidget):
         nl2 = QtWidgets.QLabel(uname)
         nl2.setStyleSheet("color:#c8a010;font-size:12px;font-weight:700;background:transparent;")
         bl2.addWidget(ic2); bl2.addWidget(nl2)
-        bl.addLayout(lv); bl.addStretch(); bl.addWidget(badge)
+        # credit label - hardcoded, cannot be changed
+        credit = QtWidgets.QLabel("Created by  Jaswanth Kosuri")
+        credit.setStyleSheet(
+            "color:#5a3600;font-size:9px;font-style:italic;"
+            "letter-spacing:1px;background:transparent;")
+        credit.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+
+        right_col = QtWidgets.QVBoxLayout()
+        right_col.setSpacing(4)
+        right_col.addWidget(badge, alignment=Qt.AlignRight)
+        right_col.addWidget(credit, alignment=Qt.AlignRight)
+
+        bl.addLayout(lv); bl.addStretch(); bl.addLayout(right_col)
         root.addWidget(banner)
 
         # scroll body
@@ -2360,7 +2104,6 @@ class JKGamesHub(QtWidgets.QWidget):
             ("SNAKE",          "S",    "#4dff91", "Eat food\ngrow longer",        open_snake),
             ("BREAKOUT",       "B",    "#4fc3f7", "Break bricks\nwith ball",      open_breakout),
             ("BLOCK BLAST",    "BB",   "#ff7043", "Falling blocks\nclear rows",   open_block_blast),
-            ("SPACE INVADERS", "SI",   "#00ff88", "Shoot aliens\nfrom below",     open_space_invaders),
             ("BLOCKUDOKU",     "BU",   "#9b59b6", "Select+place\nblocks",         open_blockudoku),
         ]
         self._cards = []
@@ -2406,7 +2149,10 @@ class JKGamesHub(QtWidgets.QWidget):
             "QTabBar::tab:hover{color:#c8a820;}"
         )
         for game, color in self._tab_games:
-            self.tabs.addTab(self._score_tab(game, color), game.upper())
+            placeholder = QtWidgets.QWidget()
+            placeholder.setStyleSheet("background:#111008;")
+            self.tabs.addTab(placeholder, game.upper())
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         bl3.addWidget(self.tabs)
 
         sa.setWidget(body); root.addWidget(sa)
@@ -2473,10 +2219,31 @@ class JKGamesHub(QtWidgets.QWidget):
         scroll.setWidget(sw); outer.addWidget(scroll)
         return w
 
-    def _refresh(self):
+    def showEvent(self, e):
+        super(JKGamesHub, self).showEvent(e)
+        self._rebuild_all_tabs()
+
+    def _rebuild_all_tabs(self):
+        self.tabs.blockSignals(True)
+        cur = self.tabs.currentIndex()
         while self.tabs.count(): self.tabs.removeTab(0)
         for game, color in self._tab_games:
             self.tabs.addTab(self._score_tab(game, color), game.upper())
+        self.tabs.setCurrentIndex(max(0, min(cur, self.tabs.count()-1)))
+        self.tabs.blockSignals(False)
+
+    def _on_tab_changed(self, idx):
+        # rebuild the clicked tab so scores are always fresh
+        if idx < 0 or idx >= len(self._tab_games): return
+        game, color = self._tab_games[idx]
+        self.tabs.blockSignals(True)
+        self.tabs.removeTab(idx)
+        self.tabs.insertTab(idx, self._score_tab(game, color), game.upper())
+        self.tabs.setCurrentIndex(idx)
+        self.tabs.blockSignals(False)
+
+    def _refresh(self):
+        self._rebuild_all_tabs()
 
     def _update_card_focus(self):
         for i, card in enumerate(self._cards):
@@ -2535,10 +2302,6 @@ def open_block_blast():
     _refs["bb"].show(); _refs["bb"].raise_()
     _refs["bb"].canvas.setFocus()
 
-def open_space_invaders():
-    _refs["si"] = GameSpaceInvaders()
-    _refs["si"].show(); _refs["si"].raise_()
-    _refs["si"].canvas.setFocus()
 
 def open_blockudoku():
     _refs["bu"] = GameBlockudoku()
